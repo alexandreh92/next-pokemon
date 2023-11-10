@@ -9,41 +9,56 @@ const HTTP_VERBS = {
 type HTTPVerbKeys = keyof typeof HTTP_VERBS;
 type HTTPVerb = (typeof HTTP_VERBS)[HTTPVerbKeys];
 
-type APIMiddleware = (error: unknown) => Promise<void>;
-
 export class BaseAPI {
   baseURL: string;
-  headers: HeadersInit;
-  exceptionMiddleware?: APIMiddleware;
+  requestMiddlewares: any[];
+  responseMiddlewares: any[];
 
   constructor() {
     this.baseURL = "";
-    this.headers = { "Content-Type": "application/json" };
-    this.exceptionMiddleware;
+    this.requestMiddlewares = [];
+    this.responseMiddlewares = [];
   }
 
-  async get(path: string, config?: RequestInit) {
-    return this.request(HTTP_VERBS.GET, path, config);
+  async get<T>(path: string, config?: RequestInit) {
+    return this.request<T>(HTTP_VERBS.GET, path, config);
   }
 
-  async request(method: HTTPVerb, path: string, config?: RequestInit) {
+  async request<T>(method: HTTPVerb, path: string, config?: RequestInit) {
     const url = this.#urlForPath(path);
 
     const options = {
       ...config,
+      headers: { "Content-Type": "application/json" },
       method: method,
     } satisfies RequestInit;
 
     try {
+      for (const middleware of this.requestMiddlewares) {
+        await middleware(options);
+      }
+
       const response = await fetch(url, options);
-      console.log("response");
-      const data = await response.json();
 
-      return data;
-    } catch (error) {
-      if (!this.exceptionMiddleware) throw error;
+      //remove this because next has the error.tsx which handles the error.
+      let errors: BaseAPIError[] = [];
 
-      await this.exceptionMiddleware(error);
+      for (const middleware of this.responseMiddlewares) {
+        errors = await middleware(options, response, errors);
+      }
+
+      let data: T | undefined = undefined;
+      if (response.ok) {
+        data = await response.json();
+      }
+
+      return { data, errors };
+    } catch (error: any) {
+      return {
+        errors: [
+          { name: error.name, message: error.message },
+        ] as BaseAPIError[],
+      };
     }
   }
 
